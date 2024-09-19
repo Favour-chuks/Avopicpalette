@@ -1,161 +1,115 @@
-import type { Authentication } from "@canva/user";
-import { auth } from "@canva/user";
-import { Box, Button, Rows, Text, Title } from "@canva/app-ui-kit";
-import { useState, useEffect } from "react";
+import {
+  Rows,
+  Button,
+} from "@canva/app-ui-kit";
+import React, { useEffect, useState } from "react";
 import styles from "styles/components.css";
+import baseStyles from "styles/components.css";
+import FileUpload from "./components/sectionComponent/fileUpload";
+import { auth } from "@canva/user";
+import ColorSwatch from "./components/sectionComponent/color";
+// import ConnectionError from "./stateComponents/ConnectionError";
+import MasonryList from "./components/sectionComponent/masonry";
+import axios from 'axios'
+import Warn from "./components/actionComponent/warn";
 
-type State = "authenticated" | "not_authenticated" | "checking" | "error";
 
-/**
- * This endpoint is defined in the ./backend/server.ts file. You need to
- * register the endpoint in the Developer Portal before sending requests.
- *
- * BACKEND_HOST is configured in the root .env file, for more information,
- * refer to the README.md.
- */
-const AUTHENTICATION_CHECK_URL = `${BACKEND_HOST}/api/authentication/status`;
+type CanvaUserToken = string;
 
-const checkAuthenticationStatus = async (
-  auth: Authentication
-): Promise<State> => {
-  /**
-   * Send a request to an endpoint that checks if the user is authenticated.
-   * This is example code, intended to convey the basic idea. When implementing this in your app, you might want more advanced checks.
-   *
-   * Note: You must register the provided endpoint via the Developer Portal.
-   */
-  try {
-    const token = await auth.getCanvaUserToken();
-    const res = await fetch(AUTHENTICATION_CHECK_URL, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      method: "POST",
-    });
-    const body = await res.json();
+export default function App() {
+  // const [error, setError] = useState('')
+  // const [messageRequest, setMessageRequest] = useState('')
+  const [token, setToken] = useState<CanvaUserToken | undefined>(undefined);
 
-    // if (body?.isAuthenticated) {
-    //   return "authenticated";
-    // } else {
-    //   return "not_authenticated";
-    // }
-    console.log(body?.message)
-  } catch (error) {
-    console.error(error);
-    return "error";
-  }
-};
-
-export const App = () => {
-  // Keep track of the user's authentication status.
-  const [state, setState] = useState<State>("checking");
-
-  useEffect(() => {
-    checkAuthenticationStatus(auth).then((status) => {
-      setState(status);
-    });
-  }, []);
-
-  const startAuthenticationFlow = async () => {
-    // Start the authentication flow
-    try {
-      const response = await auth.requestAuthentication();
-      const status = response.status;
-      switch (status) {
-        case "COMPLETED":
-          setState("authenticated");
-          break;
-        case "ABORTED":
-          console.warn("Authentication aborted by user.");
-          setState("not_authenticated");
-          break;
-        case "DENIED":
-          console.warn("Authentication denied by user", response.details);
-          setState("not_authenticated");
-          break;
-        default:
-          console.error("Unknown authentication response: ", status);
-      }
-    } catch (e) {
-      console.error(e);
-      setState("error");
+  // to handle button click
+  const getColorPalette = async () => {
+    if (navigator.onLine) {
+      const response = await axios.post('http://localhost:3001/upload');
+      console.log(response.data)
+    } else {
+      // console.log("WebSocket is not ready or no files selected.");
+      return  <Warn tone={'warn'} message={"looks like your'e offline, try checking your internet connection"} isclicked={true}/>
     }
   };
 
-  const doesSomething = async () => {
-    try {
-      const token = await auth.getCanvaUserToken();
-      const res = await fetch(`${BACKEND_HOST}/api/doesSomething`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        method: "POST",
-      });
-      const body = await res.json();
-      console.log(body?.message)
-    
-    } catch (error) {
-      console.error(error);
-      return "error";
-    } 
-  }
 
-  if (state === "error") {
-    return (
-      <div className={styles.scrollContainer}>
-        <Text>
-          <Text variant="bold" tagName="span">
-            Something went wrong.
-          </Text>{" "}
-          Check the JavaScript Console for details.
-        </Text>
-      </div>
-    );
-  }
+  useEffect(() => {
+    const authenticate = async () => {
+      try {
+        // Fetch user token from Canva authentication API
+        const userToken = await auth.getCanvaUserToken();
 
+        if (!userToken) {
+          console.error("No user token found");
+          return;
+        }
+
+        setToken(userToken)
+        console.log(userToken)
+        // Use environment variable for the backend URL to avoid hardcoding
+        const backendUrl = "http://localhost:3001";
+
+        // Perform the axios request
+        const response = await axios.post(
+          `${backendUrl}/login`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        // Handle different response statuses
+        if (response.status === 200) {
+          console.log("Authentication successful:", response.data);
+        } else {
+          console.warn(`Unexpected response status: ${response.status}`);
+        }
+      } catch (error: any) {
+        // Provide better error handling
+        if (error.response) {
+          // Server responded with a status other than 2xx
+          console.error(
+            `Authentication failed with status ${error.response.status}:`,
+            error.response.data
+          );
+        } else if (error.request) {
+          // Request was made, but no response received
+          console.error("No response received from server:", error.request);
+        } else {
+          // Something else happened in setting up the request
+          console.error("Error in authentication request:", error.message);
+        }
+      }
+    };
+    authenticate(); // Invoke the authenticate function
+  }, []); // Empty dependency array for on-mount execution only
+
+  
   return (
-    <div className={styles.scrollContainer}>
-      <Rows spacing="3u">
-        <Text>
-          This example demonstrates how apps can allow users to authenticate
-          with the app via a third-party platform.
-        </Text>
-        <Text>
-          To set up please see the README.md in the /examples/authentication
-          folder
-        </Text>
-        <Rows spacing="1u">
-          <Title size="small">Try the authentication flow</Title>
-          <Text size="small" tone="tertiary">
-            To test the authentication flow, click the button below. The
-            username is "username" and the password is "password".
-          </Text>
-        </Rows>
-        <Box>
-          <Text alignment="center">{createAuthenticationMessage(state)}</Text>
-        </Box>
-        <Button
-          variant="primary"
-          onClick={startAuthenticationFlow}
-          disabled={state === "authenticated" || state === "checking"}
-          stretch
-        >
-          Start authentication flow
-        </Button>
-      </Rows>
-    </div>
-  );
-};
+    <>
+      <div className={styles.fullHeight}>
+        <Rows spacing="4u">
+          {/* <ColorSwatch color={[]} /> */}
 
-const createAuthenticationMessage = (state: State) => {
-  switch (state) {
-    case "checking":
-      return "Checking authentication status...";
-    case "authenticated":
-      return "You are authenticated!";
-    case "not_authenticated":
-      return "You are not authenticated.";
-    default:
-      console.error("Unknown authentication response: ", state);
-  }
-};
+          <Rows spacing={"2u"}>
+            <FileUpload token={token}/>
+
+            <Button
+              alignment="center"
+              onClick={getColorPalette}
+              stretch
+              type="submit"
+              variant="primary">
+              Generate Pallete
+            </Button>
+          </Rows>
+
+          {/* this handles the masonry display */}
+          <MasonryList />
+        </Rows>
+      </div>
+    </>
+  );
+}

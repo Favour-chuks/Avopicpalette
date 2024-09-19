@@ -1,311 +1,101 @@
-import * as dotenv from "dotenv";
-import * as cookieParser from "cookie-parser";
-import * as crypto from "crypto";
-import * as express from "express";
-import * as cors from "cors";
-import * as basicAuth from "express-basic-auth";
-import { getTokenFromQueryString } from "../../utils/backend/jwt_middleware/jwt_middleware";
-import { createBaseServer } from "../../utils/backend/base_backend/create";
+import * as express from 'express';
+import * as dotenv from 'dotenv';
+import * as cors from 'cors';
+import  * as multer from 'multer';
+import * as cookieParser from 'cookie-parser';
+import { getTokenFromHttpHeader, getTokenFromQueryString } from "../../utils/backend/jwt_middleware/jwt_middleware";
 import { createJwtMiddleware } from "../../utils/backend/jwt_middleware";
-import { JSONFileDatabase } from "./database";
+import {handleAuthMiddleware} from "./middleware/simpleAuthMiddleware" 
+import { authorizationMiddleware } from '../components/testcomponents/testControllers';
 
-dotenv.config()
-/**
- * This file contains routes for demonstrating the authentication demo. You can
- * find the frontend of this demo in app/src/examples/authentication.tsx.
- */
+dotenv.config();
 
-/**
- * These are the hard-coded credentials for this example.
- */
-const USERNAME = "username";
-const PASSWORD = "password";
+const app = express();
+const appId = process.env.CANVA_APP_ID || '';
+const port = process.env.CANVA_BACKEND_PORT || 2001;
 
-const COOKIE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-const CANVA_BASE_URL = "https://canva.com";
+const CACHE_EXPIRY_MS = 60 * 60 * 1000;
+const TIMEOUT_MS = 10 * 1000;
 
-type Data = {
-  users: string[];
-};
+const upload = multer({ dest: 'uploads/' });
 
-let activeUsers:any = new Map()
-let userFolder;
-let canvaUserID;
-let driveFolder;
-async function main() {
-  // add your CANVA_APP_ID to the .env file at the root level
-  const APP_ID = process.env.CANVA_APP_ID;
-  if (!APP_ID) {
-    throw new Error(
-      `The CANVA_APP_ID environment variable is undefined. Set the variable in the project's .env file.`
-    );
-  }
-
-  
-  activeUsers.set(canvaUserID, {
-    userId: canvaUserID,
-    lastActive: new Date(),
-    userFolder: userFolder,
-    driveFolderId: driveFolder,
-  })
-  /**
-   * Set up a database with a "users" table. In this example code, the
-   * database is simply a JSON file.
-   */
-  const db = new JSONFileDatabase<Data>({ users: [] });
-  
-  const router = express();
-
-  /**
-   * TODO: Configure your CORS Policy
-   *
-   * Cross-Origin Resource Sharing
-   * ([CORS](https://developer.mozilla.org/en-US/docs/Glossary/CORS)) is an
-   * [HTTP](https://developer.mozilla.org/en-US/docs/Glossary/HTTP)-header based
-   * mechanism that allows a server to indicate any
-   * [origins](https://developer.mozilla.org/en-US/docs/Glossary/Origin)
-   * (domain, scheme, or port) other than its own from which a browser should
-   * permit loading resources.
-   *
-   * A basic CORS configuration would include the origin of your app in the
-   * following example:
-   * const corsOptions = {
-   *   origin: 'https://app-abcdefg.canva-apps.com',
-   *   optionsSuccessStatus: 200
-   * }
-   *
-   * The origin of your app is https://app-${APP_ID}.canva-apps.com, and note
-   * that the APP_ID should to be converted to lowercase.
-   *
-   * https://www.npmjs.com/package/cors#configuring-cors
-   *
-   * You may need to include multiple permissible origins, or dynamic origins
-   * based on the environment in which the server is running. Further
-   * information can be found
-   * [here](https://www.npmjs.com/package/cors#configuring-cors-w-dynamic-origin).
-   */
-  router.use(cors());
-
-  /**
-   * The `cookieParser` middleware allows the routes to read and write cookies.
-   *
-   * By passing a value into the middleware, we enable the "signed cookies" feature of Express.js. The
-   * value should be static and cryptographically generated. If it's dynamic (as shown below), cookies
-   * won't persist between server restarts.
-   *
-   * TODO: Replace `crypto.randomUUID()` with a static value, loaded via an environment variable.
-   */
-  router.use(cookieParser(crypto.randomUUID()));
-
-  /**
-   * This endpoint is hit at the start of the authentication flow. It contains a state which must
-   * be passed back to canva so that Canva can verify the response. It must also set a nonce in the
-   * user's browser cookies and send the nonce back to Canva as a url parameter.
-   *
-   * If Canva can validate the state, it will then redirect back to the chosen redirect url.
-   */
-  router.get("/configuration/start", async (req, res) => {
-    /**
-     * Generate a unique nonce for each request. A nonce is a random, single-use value
-     * that's impossible to guess or enumerate. We recommended using a Version 4 UUID that
-     * is cryptographically secure, such as one generated by the `randomUUID` method.
-     */
-    const nonce = crypto.randomUUID();
-    // Set the expiry time for the nonce. We recommend 5 minutes.
-    const expiry = Date.now() + COOKIE_EXPIRY_MS;
-
-    // Create a JSON string that contains the nonce and an expiry time
-    const nonceWithExpiry = JSON.stringify([nonce, expiry]);
-
-    // Set a cookie that contains the nonce and the expiry time
-    res.cookie("nonce", nonceWithExpiry, {
-      secure: true,
-      httpOnly: true,
-      maxAge: COOKIE_EXPIRY_MS,
-      signed: true,
-    });
-
-    // Create the query parameters that Canva requires
-    const params = new URLSearchParams({
-      nonce,
-      state: req?.query?.state?.toString() || "",
-    });
-
-    // Redirect to Canva with required parameters
-    res.redirect(302, `${CANVA_BASE_URL}/apps/configure/link?${params}`);
-  });
-
-  /**
-   * This endpoint renders a login page. Once the user logs in, they're
-   * redirected back to Canva, which completes the authentication flow.
-   */
-  router.get(
-    "/redirect-url",
-    /**
-     * Use a JSON Web Token (JWT) to verify incoming requests. The JWT is
-     * extracted from the `canva_user_token` parameter.
-     */
-    createJwtMiddleware(APP_ID, getTokenFromQueryString),
-    /**
-     * Warning: For demonstration purposes, we're using basic authentication and
-     * hard- coding a username and password. This is not a production-ready
-     * solution!
-     */
-    basicAuth({
-      users: { [USERNAME]: PASSWORD },
-      challenge: true,
-    }),
-    async (req, res) => {
-      const failureResponse = () => {
-        const params = new URLSearchParams({
-          success: "false",
-          state: req.query.state?.toString() || "",
-        });
-        res.redirect(302, `${CANVA_BASE_URL}/apps/configured?${params}`);
-      };
-
-      // Get the nonce and expiry time stored in the cookie.
-      const cookieNonceAndExpiry = req.signedCookies.nonce;
-
-      // Get the nonce from the query parameter.
-      const queryNonce = req.query.nonce?.toString();
-
-      // After reading the cookie, clear it. This forces abandoned auth flows to be restarted.
-      res.clearCookie("nonce");
-
-      let cookieNonce = "";
-      let expiry = 0;
-
-      try {
-        [cookieNonce, expiry] = JSON.parse(cookieNonceAndExpiry);
-      } catch (e) {
-        // If the nonce can't be parsed, assume something has been compromised and exit.
-        return failureResponse();
-      }
-
-      // If the nonces are empty, exit the authentication flow.
-      // if (
-      //   isEmpty(cookieNonceAndExpiry) ||
-      //   isEmpty(queryNonce) ||
-      //   isEmpty(cookieNonce)
-      // ) {
-      //   return failureResponse();
-      // }
-
-      /**
-       * Check that:
-       *
-       * - The nonce in the cookie and query parameter contain the same value
-       * - The nonce has not expired
-       *
-       * **Note:** We could rely on the cookie expiry, but that is vulnerable to tampering
-       * with the browser's time. This allows us to double-check based on server time.
-       */
-      if (expiry < Date.now() || cookieNonce !== queryNonce) {
-        return failureResponse();
-      }
-
-      // Get the userId from JWT middleware
-      const { userId } = req.canva;
-
-      // Load the database
-      const data = await db.read();
-
-      // Add the user to the database
-      if (!data.users.includes(userId)) {
-        data.users.push(userId);
-        await db.write(data);
-      }
-
-      // Create query parameters for redirecting back to Canva
-      const params = new URLSearchParams({
-        success: "true",
-        state: req?.query?.state?.toString() || "",
-      });
-
-      // Redirect the user back to Canva
-      res.redirect(302, `${CANVA_BASE_URL}/apps/configured?${params}`);
-    }
-  );
-
-  /**
-   * TODO: Add this middleware to all routes that will receive requests from
-   * your app.
-   */
-  const jwtMiddleware = createJwtMiddleware(APP_ID);
-
-  /**
-   * This endpoint is called when a user disconnects an app from their account.
-   * The app is expected to de-authenticate the user on its backend, so if the
-   * user reconnects the app, they'll need to re-authenticate.
-   *
-   * Note: The name of the endpoint is *not* configurable.
-   *
-   * Note: This endpoint is called by Canva's backend directly and must be
-   * exposed via a public URL. To test this endpoint, add a proxy URL, such as
-   * one generated by nGrok, to the 'Add authentication' section in the
-   * Developer Portal. Localhost addresses will not work to test this endpoint.
-   */
-  router.post("/configuration/delete", jwtMiddleware, async (req, res) => {
-    // Get the user's ID from the request body
-    const { userId } = req.canva;
-
-    // Load the database
-    const data = await db.read();
-
-    // Remove the user from the database
-    await db.write({
-      users: data.users.filter((user) => user !== userId),
-    });
-
-    // Confirm that the user was removed
-    res.send({
-      type: "SUCCESS",
-    });
-  });
-
-  /**
-   * All routes that start with /api will be protected by JWT authentication
-   */
-  router.use("/api", jwtMiddleware);
-
-  /**
-   * This endpoint checks if a user is authenticated.
-   */
-  router.post("/api/authentication/status", async (req, res) => {
-  
-    // Load the database
-    // const data = await db.read();
-    const data = activeUsers.get(canvaUserID)
-
-    // Check if the user is authenticated
-    const isAuthenticated = data.userId.includes(req.canva.userId);
-
-    if(!isAuthenticated){
-      
-
-    // userData = activeUsers.get(canvaUserId);
-    console.log(activeUsers)
-    res.send({message: 'this has finally authenicated the user'})
-    } 
-    // Return the authentication status
-    // res.send({
-    //   isAuthenticated,
-    // });
-  });
-
-  router.post("/api/doesSomething", async (req, res) => {
-    res.send({
-      message: 'this path did something',
-    });
-  });
-  // const server = createBaseServer(router);
-  // server.start(process.env.CANVA_BACKEND_PORT);
-
-  router.listen(process.env.CANVA_BACKEND_PORT, () => {
-    console.log('the server is running')
-  })
+interface User {
+  userId: string;
+  lastActive: Date;
+  userFolder: string;
 }
 
-main();
+let activeUsers: Map<string, User> = new Map();
+let palette: any;
+let userData: any;
+
+app.get('/login', authorizationMiddleware, (req: any, res) => {
+  if (!req.user){
+    return res.status(400).json({ error: "Canva User not found" });
+  }
+
+  console.log(req.canva.userId)
+  
+res.cookie(req.canva, {
+  signed: true,
+})
+})
+
+app.post('/auth', async (req: express.Request, res: express.Response) => {
+
+  const canvaUserID = req.signedCookies.canva.userId
+
+  // const canvaUserID = (req as any).canva.userId;
+
+  if (!canvaUserID) {
+    console.log('Sorry, the user was not created');
+    res.status(400).send({ "message": "The user was not created" });
+    return;
+  }
+
+  try {
+    activeUsers.set(canvaUserID, {
+      userId: canvaUserID,
+      lastActive: new Date(),
+      userFolder: `${canvaUserID}/newfolder`,
+    });
+    console.log(activeUsers);
+    res.status(200).send({ "message": "User authenticated successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ "message": "Internal server error" });
+  }
+});
+
+app.post('/fileUpload', upload.array('files'), async (req: any, res: express.Response) => {
+  if (!userData) {
+    return res.status(400).json({ error: "User not found" });
+  }
+
+  const files = req.files
+
+  if (!files || files.length === 0) {
+    return res.status(400).json({ error: "No files found" });
+  }
+
+  console.log('The auth process is complete');
+  res.status(200).json({ message: "Files uploaded successfully" });
+});
+
+app.get('/getPalette', (req: express.Request, res: express.Response) => {
+  console.log('Button was clicked');
+  res.send('The button was clicked');
+});
+
+app.listen(port, () => {
+  console.log('Server is running on port:', port);
+});
+
+
+
+
