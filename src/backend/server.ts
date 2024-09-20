@@ -34,16 +34,20 @@ let activeUsers: Map<string, User> = new Map();
 let palette: any;
 let userData: any;
 
-app.get('/login', authorizationMiddleware, (req: any, res) => {
-  if (!req.user){
-    return res.status(400).json({ error: "Canva User not found" });
-  }
+app.get('/login',// authorizationMiddleware, 
+(req: any, res) => {
+// const user = authorizationMiddleware(req, res)
 
-  console.log(req.canva.userId)
+console.log(user)
+  //   if (!req.user){
+//     return res.status(400).json({ error: "Canva User not found" });
+//   }
+
+//   console.log(req.canva.userId)
   
-res.cookie(req.canva, {
-  signed: true,
-})
+// res.cookie(req.canva, {
+//   signed: true,
+// })
 })
 
 app.post('/auth', async (req: express.Request, res: express.Response) => {
