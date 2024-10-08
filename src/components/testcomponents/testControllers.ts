@@ -9,7 +9,7 @@ import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import * as  multer from 'multer';
 import { JwksClient } from "jwks-rsa";
-import * as jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 import { google, drive_v3 } from 'googleapis';
 import Vibrant from 'node-vibrant';
 
