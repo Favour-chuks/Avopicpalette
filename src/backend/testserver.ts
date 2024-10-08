@@ -155,6 +155,10 @@ app.post('/user/upload', upload.array('files'), async (req:any, res) => {
 app.listen(process.env.CANVA_BACKEND_PORT, () => {
   console.log(`Server is running on port ${process.env.CANVA_BACKEND_PORT}`);
 });
+
+
+
+
 const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 60 minutes
 const TIMEOUT_MS = 30 * 1000; // 30 seconds
 // Google Drive authentication setup
