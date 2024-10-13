@@ -38,31 +38,29 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  lastActivity: {
+    type: Date,
+    default: Date.now
+  },
   isActive: {
     type: Boolean,
-    default: true
+    default: false
   }
 });
 
-// Middleware to update `lastUsed` on find, findOne, and findOneAndUpdate
-userSchema.pre('find', function(next) {
-  this.update({}, { $set: { lastUsed: Date.now() } });
+/** Middleware to update `lastUsed` on find, findOne, and findOneAndUpdate
+ * Middleware to update `lastUsed` and `lastActivity` on find, findOne, and findOneAndUpdate
+**/
+userSchema.pre(['find', 'findOne', 'findOneAndUpdate'], function(next) {
+  this.update({}, { $set: { lastUsed: Date.now(), lastActivity: Date.now(), isActive: true } });
   next();
 });
 
-userSchema.pre('findOne', function(next) {
-  this.update({}, { $set: { lastUsed: Date.now() } });
-  next();
-});
-
-userSchema.pre('findOneAndUpdate', function(next) {
-  this.update({}, { $set: { lastUsed: Date.now() } });
-  next();
-});
-
-// Middleware to update `lastUsed` on save
+// Middleware to update `lastUsed` and `lastActivity` on save
 userSchema.pre('save', function(next) {
   this.lastUsed = Date.now();
+  this.lastActivity = Date.now();
+  this.isActive = true;
   next();
 });
 
