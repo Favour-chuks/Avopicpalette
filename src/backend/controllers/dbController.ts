@@ -2,7 +2,7 @@
 import mongoose from 'mongoose';
 import User from './path/to/your/User/model';
 
-async function checkUserActivity() {
+export async function checkUserActivity() {
   const inactivityThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
   const currentTime = new Date();
 
