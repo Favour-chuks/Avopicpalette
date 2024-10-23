@@ -35,16 +35,19 @@ const userSchema = new mongoose.Schema({
     default: Date.now
   },
   lastUsed: {
-    type: Date,
-    default: Date.now
+    type: Number,
+    default: Date.now,
+    required: true
   },
   lastActivity: {
-    type: Date,
-    default: Date.now
+    type: Number,
+    default: Date.now,
+    required: true
   },
   isActive: {
     type: Boolean,
-    default: false
+    default: false,
+    required: true
   }
 });
 
@@ -52,7 +55,7 @@ const userSchema = new mongoose.Schema({
  * Middleware to update `lastUsed` and `lastActivity` on find, findOne, and findOneAndUpdate
 **/
 userSchema.pre(['find', 'findOne', 'findOneAndUpdate'], function(next) {
-  this.update({}, { $set: { lastUsed: Date.now(), lastActivity: Date.now(), isActive: true } });
+  this.setUpdate({ $set: { lastUsed: Date.now(), lastActivity: Date.now(), isActive: true } });
   next();
 });
 
