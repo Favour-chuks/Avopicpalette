@@ -9,16 +9,20 @@ import * as  multer from 'multer';
 import { JwksClient } from "jwks-rsa";
 import { google, drive_v3 } from 'googleapis';
 import Vibrant from 'node-vibrant';
-// import * as cookieParser from 'cookie-parser';
+import mongoose from "mongoose";
+import User from './model/usermodel'
+import ActivityService from './controllers/activityService';
 const jwt  = require('jsonwebtoken')
-const cookieParser = require('cookie-parser')
+
+
 
 dotenv.config();
 
 const app = express();
-const appId = process.env.CANVA_APP_ID || ''; // Ensure this is defined in .env
+const appId = process.env.CANVA_APP_ID || '';
+const mongoDBURL = process.env.MONGO_DB_URL || '';
 
-// app.use(cors())
+
 app.use(
   cors({
     origin: `https://app-${appId.toLowerCase()}.canva-apps.com`,
@@ -27,44 +31,16 @@ app.use(
   })
 );
 app.use(express.json());
-app.use(cookieParser());
 
-// to see the paths and their stored cookies
-app.use((req, res, next) => {
-  console.log('Request path:', req.path);
-  console.log('Cookies:', req.cookies);
-  next();
-})
+
+// app.use(cookieParser()); //having difficulty using third party cookies
+app.use(loginMiddleware)
 
 const upload = multer({ dest: 'uploads/' });
 
 let activeUsers = new Map()
 
-app.use(loginMiddleware)
 
-
-app.post('/login', async (req:any, res) => {
-  const token = getTokenFromHeader(req)
-
-  if(!token) {
-    return res.sendStatus(401)
-  }
-
-  
-  res.cookie('token', token, {
-    priority: 'high',
-    path: '/',
-    secure: process.env.NODE_ENV === 'production'
-  })
-
-  console.log('the login process has been completed')
-})
-
-app.get('/newpath', (req, res) => {
-  console.log(req.cookies.token)
-})
-
-// commmented out the code to test the auth middleware
 app.post('/auth', authMiddleware, async (req:any, res) => {
 
   const authResult:any = req.auth
@@ -85,28 +61,29 @@ app.post('/auth', authMiddleware, async (req:any, res) => {
     const driveFolder = await findOrCreateDriveFolder(canvaUserId, parentFolderId);
 
     if (!driveFolder) {
-      throw Error('error with the divefolder id')
+      throw Error('cannot detect the divefolder id')
     }
 
-    activeUsers.set(canvaUserId, {
-      userId: canvaUserId,
-      lastActive: new Date(),
-      driveFolder: driveFolder,
-      localFolder: userFolder
-    })
+    
+    const newUser = {
+      _id: canvaUserId,
+      localFolderId: userFolder,
+      driveFolderId: driveFolder
+    }
 
-    // adding the maxage changes the cookie from a section token to a timeout token
-    res.cookie('userData', JSON.stringify(activeUsers.get(canvaUserId)), {
-      priority: 'high',
-      domain: `canva-apps.com`,
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'none', // suppose to restrict the cookie to just the same site
-      path: '/', // supposed to make the cookie avaliable to all paths
-      maxAge: 24 * 60 * 60 * 1000, // sets the expiry time to 1 day
-    }) // is supposed to reduce the storage size
+    //this creates a new instance of a user and stores it to the database
+    const user = await User.create(newUser)
+    console.log(user)
 
-    // console.log(res.getHeader('Set-Cookie'))
+    /** changed the user database from a map to a mongoose database */
+    // activeUsers.set(canvaUserId, {
+    //   userId: canvaUserId,
+    //   lastActive: new Date(),
+    //   driveFolder: driveFolder,
+    //   localFolder: userFolder
+    // })
+
+    res.status(201).send(user)
 
     console.log('all the necessary starters has been done')
   } catch (error) {
@@ -115,17 +92,15 @@ app.post('/auth', authMiddleware, async (req:any, res) => {
   }
 });
 
-app.use("/user", userMiddleware)
 
+app.post('/auth/user/getuser', (req:any, res) => {
 
-app.post('/user/getuser', (req:any, res) => {
-
-  if (req.user) {
-    console.log('you have made a request to this path')
-    return res.status(200).json({ message: 'User authenticated', user: req.user });
+  if (req.session.userid) {
+    console.log(`the user ${req.session.userid} was found`)
+    return res.status(200).json({ message: 'User data found', user: req.session.userid });
   } else {
-    console.log('user not authenticated')
-    return res.status(401).json({ message: 'User not authenticated' });
+    console.log('user data not found')
+    return res.status(401).json({ message: 'User data not found' });
   }
 });
 
@@ -144,7 +119,7 @@ app.post('/user/upload', upload.array('files'), async (req:any, res) => {
     } // sends an error if any of the needed options are empty
 
     const { publicUrls, imagePaths } = await handleUpload(files, localFolder, driveFolder, userId);
-    await extractColorsFromImages(imagePaths, userId)
+    extractColorsFromImages(imagePaths, userId)
     res.status(200).json({ message: "Files uploaded", urls: publicUrls });
   } catch (error) {
     console.error("Error in upload:", error);
@@ -152,17 +127,23 @@ app.post('/user/upload', upload.array('files'), async (req:any, res) => {
   }
 });
 
-app.listen(process.env.CANVA_BACKEND_PORT, () => {
-  console.log(`Server is running on port ${process.env.CANVA_BACKEND_PORT}`);
-});
-
-
+mongoose
+  .connect(mongoDBURL)
+  .then(() => {
+    app.listen(process.env.CANVA_BACKEND_PORT, () => {
+      console.log(`the server is running on ${process.env.CANVA_BACKEND_PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.log(error);
+  });
 
 
 const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 60 minutes
 const TIMEOUT_MS = 30 * 1000; // 30 seconds
 // Google Drive authentication setup
-const KEYFILEPATH: string = path.join(__dirname, "cred.json");  // Path to the Google API credentials file
+const credentials = JSON.parse(process.env.GOOGLE_CLOUD_CREDENTIALS);
+const KEYFILEPATH: string = credentials;  // Path to the Google API credentials file
 const SCOPES: string[] = ["https://www.googleapis.com/auth/drive"];  // Scopes for Google Drive access
 
 const googleAuth = new google.auth.GoogleAuth({
@@ -211,17 +192,17 @@ function getTokenFromHeader(request: express.Request) {
   return token as string; // to return the token as a string
 }
 
-function loginMiddleware(req, res, next) {
-  const token = req.cookies.token
-  if(!token){
-    req.user = null
-  } else {
-  try {
-    req.user = verifyAndAuthorizeRequest(token, appId)
-    console.log('the user has been verified')
-  } catch {
-    req.user = null
+async function loginMiddleware(req, res, next) {
+  const token = getTokenFromHeader(req)
+
+  if(!token) {
+    return res.sendStatus(401)
   }
+  try {
+    const authResult = await verifyAndAuthorizeRequest(token, appId)
+    console.log(authResult)
+  } catch (error) {
+    return console.log('error finding the user token')
   }
   next()
 }
@@ -267,81 +248,6 @@ async function verifyAndAuthorizeRequest(token: any, appId: string) {
    };
  }
 }
-
-//user Middleware
-function userMiddleware(req, res, next) {
-  console.log('entering middleware')
-  const userCookie = req.cookies.userData
-    
-  console.log(userCookie)
-  if (!userCookie) {
-    return res.status(401).json({ message: 'user not found' });
-  }
-  try {
-    console.log('user data found')
-    const userData = JSON.parse(userCookie)
-    req.user = {
-      id: userData.userId,
-      lastActive: userData.lastActive,
-      drivefolder: userData.driveFolder,
-      localfolder: userData.localFolder,
-    }
-    
-  console.log(req.user)
-  } catch (error) {
-    console.log('error parsing cookie:', error)
-  }
-  console.log('exiting middleware')
-  next()   
-}
-
-// authorization middleware 
-const  authorizationMiddleware = async (req: any, res: Response, next: NextFunction) => {
- const token = getTokenFromHeader(req);
-
- if (!token) {
-   return res.sendStatus(401); // Unauthorized
- }
-
- try {
-   const decoded = jwt.decode(token, { complete: true });
-   
-   if (!decoded || !decoded.header) {
-     throw new Error('Invalid token structure');
-   }
-
-   console.log(decoded.header)
-
-   const { kid } = decoded.header;
-
-   const jwks = new JwksClient({
-     jwksUri: `https://api.canva.com/rest/v1/apps/${appId}/jwks`,
-     cache: true,
-     cacheMaxAge: CACHE_EXPIRY_MS,
-     timeout: TIMEOUT_MS,
-     rateLimit: true,
-   });
-
-   const key = await jwks.getSigningKey(decoded.header.kid);
-   const publicKey = key.getPublicKey();
-
-   const verified: any = jwt.verify(token, publicKey, {
-     audience: appId,
-   });
-
-   if (!verified.aud || !verified.brandId || !verified.userId) {
-     throw new Error('The user token is not valid');
-   }
-
-   req.user = verified; // Attach user data to the request object
-   next(); // Proceed to the next middleware or route handler
- } catch (error: any) {
-   console.error('Authorization failed:', error.message);
-   return res.status(403).json({ message: 'Authorization failed: ' + error.message });
- }
-}
-
-
 
 async function findOrCreateLocalFolder(folderName) {
   const directoryPath = path.join(__dirname, 'public', 'uploads');
@@ -618,5 +524,20 @@ async function checkAndWriteJsonFile(filePath: string, results): Promise<any> {
   } catch (error) {
     console.error(`Error checking/reading file ${filePath}:`, error);
     return null;
+  }
+}
+
+
+// These next ones are the mongodb Middleware 😃
+
+async function activityMiddleware(req, res, next){
+  try {
+    if (req.user && req.user._id) {
+      await ActivityService.updateUserActivity(canvaUserId)
+    }
+    next()
+  } catch (error) {
+    console.error('Activity middlwarea error:', error)
+    next(error)
   }
 }
